@@ -1,0 +1,95 @@
+/* For information on how to create your own theme, please see:
+http://ionicframework.com/docs/theming/ */
+:root {
+  --ion-color-energize: #ffc900;
+  --ion-color-energize-rgb: 255, 201, 0;
+  --ion-color-energize-contrast: #ffffff;
+  --ion-color-energize-contrast-rgb: 0, 0, 0;
+  --ion-color-energize-shade: #e0b100;
+  --ion-color-energize-tint: #ffce1a;
+
+  --ion-color-complete: #5d9b6c;
+  --ion-color-complete-rgb: 93, 155, 108;
+  --ion-color-complete-contrast: #ffffff;
+  --ion-color-complete-contrast-rgb: 255, 255, 255;
+  --ion-color-complete-shade: #52885f;
+  --ion-color-complete-tint: #6da57b;
+}
+
+.ion-color-energize {
+  --ion-color-base: var(--ion-color-energize);
+  --ion-color-base-rgb: var(--ion-color-energize-rgb);
+  --ion-color-contrast: var(--ion-color-energize-contrast);
+  --ion-color-contrast-rgb: var(--ion-color-energize-contrast-rgb);
+  --ion-color-shade: var(--ion-color-energize-shade);
+  --ion-color-tint: var(--ion-color-energize-tint);
+}
+
+.ion-color-complete {
+  --ion-color-base: var(--ion-color-complete);
+  --ion-color-base-rgb: var(--ion-color-complete-rgb);
+  --ion-color-contrast: var(--ion-color-complete-contrast);
+  --ion-color-contrast-rgb: var(--ion-color-complete-contrast-rgb);
+  --ion-color-shade: var(--ion-color-complete-shade);
+  --ion-color-tint: var(--ion-color-complete-tint);
+}
+
+.button-large {
+  font-size: 1rem;
+}
+
+.tic-loading {
+  --background: #f0f0f0; /* Custom background color */
+  --message-color: #333; /* Custom message color */
+
+  .loading-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .loading-wrapper::before {
+    content: '';
+    display: block;
+    width: 160px;
+    height: 20px;
+    background-image: url('/images/loading.gif');
+    background-size: contain;
+    background-repeat: no-repeat;
+    margin-bottom: 10px;
+  }
+}
+
+.form-input-label {
+  font-size: 16px;
+  padding-left: 8px;
+}
+
+.form-input label {
+  border-bottom: 2px solid #ccc !important;
+}
+
+.form-input ion-input {
+  margin-top: 5px;
+}
+
+.complete {
+  color: var(--ion-color-complete);
+  display: inline;
+  font-size: 1.25rem;
+}
+
+/* Imitate MD fill style for ion-input and ion-textarea on iOS to match MD fill look */
+.ios ion-input,
+.ios ion-textarea {
+  --background: #f4f5f8;
+  --box-shadow: none;
+  --padding-start: 12px;
+  --padding-end: 12px;
+  margin-bottom: 12px;
+}
+
+.ios ion-list-header {
+  font-size: 0.875rem;
+}

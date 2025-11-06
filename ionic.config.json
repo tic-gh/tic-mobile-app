@@ -1,0 +1,8 @@
+{
+  "name": "tic-mobile-new",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "vue-vite",
+  "id": "9aa8497e"
+}
