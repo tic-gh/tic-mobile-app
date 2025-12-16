@@ -1,7 +1,9 @@
 import { ref, computed, readonly } from 'vue';
 import { Camera, CameraResultType, CameraSource, CameraDirection, ImageOptions } from '@capacitor/camera';
 import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
 import { useI18n } from 'vue-i18n';
+import { useStorage } from './useStorage';
 
 export interface CameraImage {
   webPath: string;
@@ -20,6 +22,7 @@ export function useCamera() {
   const lastImage = ref<CameraImage | null>(null);
   const error = ref<CameraError | null>(null);
   const { t } = useI18n({ useScope: 'global' });
+  const { storageGetJson } = useStorage();
 
   // Check if camera is available on the current platform
   const checkAvailability = async () => {
@@ -85,6 +88,124 @@ export function useCamera() {
     }
   };
 
+  // Helper function to save image to permanent storage
+  const saveImageToPermanentStorage = async (imagePath: string): Promise<string | null> => {
+    try {
+      // Get report_id from download data
+      const download = await storageGetJson('download');
+      if (!download || !download.inspection || !download.inspection.id) {
+        console.warn('No report_id found in download data, skipping permanent storage save');
+        return null;
+      }
+
+      const reportId = download.report.report_no;
+      const albumPath = `tic-album/${reportId}`;
+
+      // Generate unique filename with timestamp
+      const timestamp = Date.now();
+      const randomSuffix = Math.random().toString(36).substring(2, 9);
+      const fileName = `image_${timestamp}_${randomSuffix}.jpg`;
+      const fullPath = `${albumPath}/${fileName}`;
+
+      // Read the original image file
+      let base64Data: string;
+      
+      // Handle different path formats
+      if (imagePath.startsWith('file://')) {
+        // Remove file:// prefix for Filesystem API
+        const fsPath = imagePath.replace(/^file:\/\//, '');
+        const fileData = await Filesystem.readFile({ path: fsPath });
+        if (typeof fileData.data === 'string') {
+          base64Data = fileData.data;
+        } else {
+          // Convert Blob to base64
+          const reader = new FileReader();
+          base64Data = await new Promise<string>((resolve, reject) => {
+            reader.onloadend = () => {
+              const base64String = reader.result as string;
+              const base64 = base64String.includes(',') 
+                ? base64String.split(',')[1] 
+                : base64String;
+              resolve(base64);
+            };
+            reader.onerror = reject;
+            if (fileData.data instanceof Blob) {
+              reader.readAsDataURL(fileData.data);
+            } else {
+              reject(new Error('Unexpected data type'));
+            }
+          });
+        }
+      } else if (imagePath.startsWith('capacitor://') || imagePath.startsWith('https://localhost/_capacitor_file_/') || imagePath.startsWith('http://localhost/_capacitor_file_/')) {
+        // For capacitor:// URLs or converted Capacitor file URLs, fetch the blob and convert to base64
+        const response = await fetch(imagePath);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch image: ${response.statusText}`);
+        }
+        const blob = await response.blob();
+        const reader = new FileReader();
+        base64Data = await new Promise<string>((resolve, reject) => {
+          reader.onloadend = () => {
+            const base64String = reader.result as string;
+            // Remove data URL prefix if present
+            const base64 = base64String.includes(',') 
+              ? base64String.split(',')[1] 
+              : base64String;
+            resolve(base64);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } else {
+        // Try to read as direct path
+        const fileData = await Filesystem.readFile({ path: imagePath });
+        if (typeof fileData.data === 'string') {
+          base64Data = fileData.data;
+        } else {
+          // Convert Blob to base64
+          const reader = new FileReader();
+          base64Data = await new Promise<string>((resolve, reject) => {
+            reader.onloadend = () => {
+              const base64String = reader.result as string;
+              const base64 = base64String.includes(',') 
+                ? base64String.split(',')[1] 
+                : base64String;
+              resolve(base64);
+            };
+            reader.onerror = reject;
+            if (fileData.data instanceof Blob) {
+              reader.readAsDataURL(fileData.data);
+            } else {
+              reject(new Error('Unexpected data type'));
+            }
+          });
+        }
+      }
+
+      // Save to permanent storage (Documents directory)
+      await Filesystem.writeFile({
+        path: fullPath,
+        data: base64Data,
+        directory: Directory.Documents,
+        recursive: true,
+      });
+
+      // Get the URI and convert using Capacitor.convertFileSrc
+      const fileUri = await Filesystem.getUri({
+        path: fullPath,
+        directory: Directory.Documents,
+      });
+
+      // Convert the path using Capacitor.convertFileSrc to make it web-accessible
+      const convertedPath = Capacitor.convertFileSrc(fileUri.uri);
+      
+      return convertedPath;
+    } catch (err) {
+      console.error('Error saving image to permanent storage:', err);
+      return null;
+    }
+  };
+
   // Take a photo using the camera
   const takePhoto = async (
     portrait: boolean,
@@ -103,13 +224,12 @@ export function useCamera() {
       }
 
       const defaultOptions: ImageOptions = {
-        quality: 90,
+        quality: 60,
         allowEditing: false,
         resultType: CameraResultType.Uri,
         source: CameraSource.Camera,
         direction: CameraDirection.Rear,
         correctOrientation: true,
-        saveToGallery: true,
         ...options,
       };
 
@@ -143,10 +263,14 @@ export function useCamera() {
         throw new Error('No image path received from camera');
       }
       const webPath = image.webPath!;
-
+      
+      // Save image.path to permanent storage if it exists
+      let savedPath: string | undefined = undefined;
+      if (image.webPath) {
+        savedPath = (await saveImageToPermanentStorage(image.webPath)) || undefined;
+      }
       const cameraImage: CameraImage = {
-        webPath,
-        path: image.path,
+        webPath: savedPath || webPath,
       };
 
       lastImage.value = cameraImage;
@@ -185,7 +309,6 @@ export function useCamera() {
         resultType: CameraResultType.Uri,
         source: CameraSource.Photos,
         correctOrientation: true,
-        saveToGallery: true,
         ...options,
       };
 
@@ -196,9 +319,14 @@ export function useCamera() {
       }
       const webPath = image.webPath!;
 
+      // Save image.path to permanent storage if it exists
+      let savedPath: string | undefined = undefined;
+      if (image.webPath) {
+        savedPath = (await saveImageToPermanentStorage(image.webPath)) || undefined;
+      }
+
       const cameraImage: CameraImage = {
-        webPath,
-        path: image.path,
+        webPath: savedPath || webPath
       };
 
       lastImage.value = cameraImage;
@@ -237,7 +365,6 @@ export function useCamera() {
         width: 1920,
         height: 1080,
         correctOrientation: true,
-        saveToGallery: true,
         ...options,
       };
 
@@ -248,9 +375,14 @@ export function useCamera() {
       }
       const webPath = image.webPath!;
 
+      // Save image.path to permanent storage if it exists
+      let savedPath: string | undefined = undefined;
+      if (image.webPath) {
+        savedPath = (await saveImageToPermanentStorage(image.webPath)) || undefined;
+      }
+
       const cameraImage: CameraImage = {
-        webPath,
-        path: image.path,
+        webPath: savedPath || webPath,
       };
 
       lastImage.value = cameraImage;

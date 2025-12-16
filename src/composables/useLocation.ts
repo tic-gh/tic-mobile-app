@@ -197,8 +197,8 @@ export function useLocation() {
     }
   };
 
-  // Send geo-reporting data to server
-  const sendGeoReporting = async (position:any, isStart: boolean = true): Promise<any> => {
+  // Start geo-reporting (compatible with old API)
+  const startGeoLocation = async (position: any): Promise<any> => {
     try {
       const download = await storageGetJson('download');
       if (!download) {
@@ -217,25 +217,40 @@ export function useLocation() {
         timestamp: position.timestamp,
       };
 
-      if (isStart) {
-        return await startGeoReporting(reportId, [geoData]);
-      } else {
-        return await stopGeoReporting(reportId, [geoData]);
-      }
+      // Explicitly call startGeoReporting to ensure we use /geo-reporting endpoint
+      return await startGeoReporting(reportId, [geoData]);
     } catch (err: any) {
-      console.error('Error sending geo-reporting:', err);
+      console.error('Error starting geo-reporting:', err);
       throw new Error(err.message || 'Error connecting to the server!');
     }
   };
 
-  // Start geo-reporting (compatible with old API)
-  const startGeoLocation = async (position: any): Promise<any> => {
-    return await sendGeoReporting(position, true);
-  };
-
   // Stop geo-reporting (compatible with old API)
   const stopGeoLocation = async (position: any): Promise<any> => {
-    return await sendGeoReporting(position, false);
+    try {
+      const download = await storageGetJson('download');
+      if (!download) {
+        throw new Error('No download data found');
+      }
+
+      const reportId = download.inspection.id;
+      
+      if (!position) {
+        throw new Error('Failed to get current position');
+      }
+
+      const geoData: GeoLocationData = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        timestamp: position.timestamp,
+      };
+
+      // Explicitly call stopGeoReporting to ensure we use /geo-out-reporting endpoint
+      return await stopGeoReporting(reportId, [geoData]);
+    } catch (err: any) {
+      console.error('Error stopping geo-reporting:', err);
+      throw new Error(err.message || 'Error connecting to the server!');
+    }
   };
 
   // Native geolocation methods (legacy compatibility)
@@ -343,7 +358,6 @@ export function useLocation() {
     getCurrentPosition,
     startWatching,
     stopWatching,
-    sendGeoReporting,
     startGeoLocation,
     stopGeoLocation,
     getGeoLocation,

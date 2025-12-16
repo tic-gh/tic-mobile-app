@@ -22,6 +22,9 @@ const config: CapacitorConfig = {
       autoStart: true,
     }
   },
+  CapacitorHttp: {
+    enabled: true,
+  },
 };
 
 export default config;

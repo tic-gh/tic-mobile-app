@@ -24,6 +24,7 @@ import { checkmarkCircle, cloudUpload } from 'ionicons/icons';
 import { checkFilesAlreadyUploaded, uploadImage, uploadImagesAsZip, sendAnswers, sendEmail } from '@/api/report';
 import { Geolocation } from '@capacitor/geolocation';
 import { useGeofence } from '@/composables/useGeofence';
+import { sendLocationToSlack } from '@/config/slack';
 
 // Type definitions
 interface InspectionItem {
@@ -60,7 +61,7 @@ const curSectionTitle = ref<string>('');
 // To switch between methods, change this value:
 // - true: Uses zipUpload() - faster, single zip file upload
 // - false: Uses multiUpload() - original method, individual file uploads
-const useZipUpload = ref(true);
+const useZipUpload = ref(false);
 
 useInit(async () => {
   user.value = await storageGetJson('user');
@@ -347,73 +348,141 @@ const zipUpload = async (imagesToUpload: any[], msg: string | null = null) => {
     }
   } catch (error: any) {
     console.error('Error uploading zip:', error);
-    
-    if (retry.value > 0) {
-      console.error('Max retries exceeded');
-      status.value = t('error_sending_report');
-    } else {
-      retry.value++;
-      await zipUpload(
-        imagesToUpload,
-        'Zip upload failed. Retrying ' + retry.value + '...'
-      );
-    }
+    // Send Slack alert for this error
+    sendLocationToSlack(user.value?.id, download.value?.report?.report_no, imagesToUpload.length, error.message, versionNumber.value);
+    status.value = error.message;
   }
 };
 
-// ORIGINAL: Upload multiple images individually (original function)
 const multiUpload = async (imagesToUpload: any[], msg: string | null = null) => {
-  const promisesArray: Promise<any>[] = [];
   const filesToUpload: any[] = imagesToUpload;
   const failedUpload: any[] = [];
-  let index = 1;
-  let cnt = 1;
   let fileErr = false;
+  const totalFiles = imagesToUpload.length;
+  const BATCH_SIZE = 10; // Upload 10 images at a time
+  
+  // Track progress for each file
+  const fileProgress: { [key: number]: number } = {};
+  
+  // Initialize progress tracking
+  loadProgress.value = 10; // Start at 10% (preparation phase)
 
-  for (const uri of filesToUpload) {
-    const tick = Math.floor((index / imagesToUpload.length) * 75) + 10;
-    await timeout(tick);
-    status.value =
-      (msg ? msg + ' ' : '') + t('status_uploading') + ' ' + cnt + '/' + imagesToUpload.length;
-
-    // Upload image using the uploadImage function
-    const uploadPromise = uploadImage(download.value.report.report_no, uri);
-    promisesArray.push(
-      uploadPromise.catch((err) => {
-        if (err.code === 1) {
-          console.error('File error:', uri);
-          fileErr = true;
-        } else {
-          failedUpload.push(uri);
-          index--;
-        }
-      })
-    );
-
-    index++;
-    cnt++;
-    if (fileErr) break;
-  }
-
-  await Promise.all(promisesArray);
-
-  if (failedUpload.length > 0) {
-    if (retry.value > 0) {
-      console.error('Max retries exceeded');
-      status.value = t('error_sending_report');
-    } else {
-      retry.value++;
-      await multiUpload(
-        failedUpload,
-        failedUpload.length + ' files failed to upload.. Retrying ' + retry.value
-      );
-    }
-  } else {
-    if (!fileErr) {
+  try {
+    if (imagesToUpload.length === 0) {
+      loadProgress.value = 85; // Skip to final phase
       await sendAnswerAndEmail();
+      return;
     }
+
+    // Split images into batches of 20
+    const batches: any[][] = [];
+    for (let i = 0; i < filesToUpload.length; i += BATCH_SIZE) {
+      batches.push(filesToUpload.slice(i, i + BATCH_SIZE));
+    }
+
+    let globalIndex = 0; // Track position across all batches
+
+    // Process each batch sequentially
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex];
+      const promisesArray: Promise<any>[] = [];
+
+      // Upload all images in current batch in parallel
+      for (let i = 0; i < batch.length; i++) {
+        const uri = batch[i];
+        const currentIndex = globalIndex;
+        const fileNumber = globalIndex + 1;
+        
+        status.value =
+          (msg ? msg + ' ' : '') + 
+          t('status_uploading') + ' ' + fileNumber + '/' + totalFiles + 
+          ` (Batch ${batchIndex + 1}/${batches.length})`;
+
+        fileProgress[currentIndex] = 0;
+        
+        const uploadPromise = uploadImage(
+          download.value.report.report_no,
+          uri,
+          (percent: number) => {
+            // Update progress for this specific file
+            fileProgress[currentIndex] = percent;
+            
+            // Calculate overall progress across all files
+            // 10% for preparation, 75% for uploads (10-85%), 15% for final steps (85-100%)
+            let totalProgress = 0;
+            
+            for (let j = 0; j < totalFiles; j++) {
+              // Add progress for each file (0-100%)
+              totalProgress += fileProgress[j] !== undefined ? fileProgress[j] : 0;
+            }
+            
+            // Calculate average progress: total progress / number of files
+            const averageProgress = totalProgress / totalFiles;
+            
+            // Map to overall progress: 10% base + (average progress * 75%)
+            loadProgress.value = Math.min(10 + (averageProgress * 0.75), 85);
+          }
+        );
+        
+        promisesArray.push(
+          uploadPromise.catch((err) => {
+            if (err.code === 1) {
+              console.error('File error:', uri);
+              fileErr = true;
+            } else {
+              failedUpload.push(uri);
+            }
+          })
+        );
+
+        globalIndex++;
+        if (fileErr) break;
+      }
+
+      // Wait for current batch to complete before starting next batch
+      await Promise.all(promisesArray);
+      
+      if (fileErr) break;
+    }
+
+    if (failedUpload.length > 0) {
+      if (retry.value > 0) {
+        console.error('Max retries exceeded');
+        status.value = t('error_sending_report');
+        // Send Slack alert for this error
+        sendLocationToSlack(user.value?.id, download.value?.report?.report_no, imagesToUpload.length, 'Max retries exceeded', versionNumber.value);
+      } else {
+        retry.value++;
+        await multiUpload(
+          failedUpload,
+          failedUpload.length + ' files failed to upload.. Retrying ' + retry.value
+        );
+      }
+    } else {
+      if (!fileErr) {
+        loadProgress.value = 85; // Upload phase complete
+        await sendAnswerAndEmail();
+      }
+    }
+  } catch (error: any) {
+    console.error('Error uploading images:', error);
+    // Send Slack alert for this error
+    sendLocationToSlack(user.value?.id, download.value?.report?.report_no, imagesToUpload.length, error.message, versionNumber.value);
+    status.value = error.message;
   }
 };
+
+const sendAnswer = async () => {
+  try {
+    const dataPayload = formatDataPayload(data.value);
+    // Send answers to backend
+    const answersRes = await sendAnswers(download.value?.report?.id, dataPayload, download.value?.downloadTime);
+    return answersRes;
+  } catch (error: any) {
+    console.error('Error sending answers:', error);
+    return null;
+  }
+}
 
 // Send answers and email
 const sendAnswerAndEmail = async () => {
@@ -421,9 +490,8 @@ const sendAnswerAndEmail = async () => {
     status.value = t('status_submitting');
     // Simulate progress before sending answers
     await timeout(90);
-    const dataPayload = formatDataPayload(data.value);
-    // Send answers to backend
-    const answersRes = await sendAnswers(download.value?.report?.id, dataPayload, download.value?.downloadTime);
+
+    const answersRes = await sendAnswer();
 
     if (answersRes && answersRes.success !== false) {
       status.value = t('sending_email');
