@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">TIC Inspection App</string>
+    <string name="title_activity_main">TIC Inspection App</string>
+    <string name="package_name">asia.tic.Mobile</string>
+    <string name="custom_url_scheme">asia.tic.Mobile</string>
+</resources>
